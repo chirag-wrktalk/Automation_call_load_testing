@@ -255,6 +255,8 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   const selectedCallUrl = callUrls[urlIndex];
   const callLinkDisplayName = `call-link-${urlIndex + 1}`;
 
+  const videoTarget = parallelCount;
+
   // Phase 0: Staggered Start (Spread joins over 15 seconds)
   const staggerWait = Math.random() * 15;
   console.log(`[Main] ${userName}: Staggered start - waiting ${staggerWait.toFixed(1)}s before joining.`);
@@ -266,45 +268,45 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   // const { sessionPath, runPath } = setupStatsDirectory(userName, callLinkDisplayName);
 
   // Phase 2: Wait for Media (Tiered Wait Logic)
-  console.log(`[JoinFlow] ${userName}: Waiting for video streams (Target: 5)...`);
+  console.log(`[JoinFlow] ${userName}: Waiting for video streams (Target: ${videoTarget})...`);
   let currentVideoCount = 0;
   let attempts = 0;
   const maxAttempts = 12; // 1 minute (12 * 5s)
 
-  while (currentVideoCount < 5 && attempts < maxAttempts) {
+  while (currentVideoCount < videoTarget && attempts < maxAttempts) {
     currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-    console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: 5, Attempt: ${attempts + 1}/${maxAttempts})`);
-    
-    if (currentVideoCount >= 5) break;
-    
+    console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: ${videoTarget}, Attempt: ${attempts + 1}/${maxAttempts})`);
+
+    if (currentVideoCount >= videoTarget) break;
+
     await I.wait(5);
     attempts++;
   }
 
-  // Extension Phase: If still below 5, record screenshots and wait 30s more (Conditional on DEBUG_CALL)
-  if (currentVideoCount < 5 && process.env.DEBUG_CALL === 'true') {
+  // Extension Phase: If still below target, record screenshots and wait 30s more (Conditional on DEBUG_CALL)
+  if (currentVideoCount < videoTarget && process.env.DEBUG_CALL === 'true') {
     const runGroup = process.env.RUN_ID || new Date().toISOString().substring(0, 16).replace(/[:T]/g, '-');
     const failPath = path.join(__dirname, '..', 'stats', runGroup, callLinkDisplayName, 'failed-to-join', userName);
     if (!fs.existsSync(failPath)) fs.mkdirSync(failPath, { recursive: true });
 
     console.warn(`[JoinFlow] ${userName}: Target not met in 1 min. DEBUG_CALL is true - starting 30s recording phase...`);
-    
+
     let extraAttempts = 0;
-    while (currentVideoCount < 5 && extraAttempts < 6) { // 30 seconds (6 * 5s)
+    while (currentVideoCount < videoTarget && extraAttempts < 6) { // 30 seconds (6 * 5s)
       // Save screenshot at each step of the extension
       await I.saveScreenshot(path.join(failPath, `failure_step_${extraAttempts + 1}.png`));
-      
+
       currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-      console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/5 (Attempt: ${extraAttempts + 1}/6)`);
-      if (currentVideoCount >= 5) break;
+      console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/${videoTarget} (Attempt: ${extraAttempts + 1}/6)`);
+      if (currentVideoCount >= videoTarget) break;
       await I.wait(5);
       extraAttempts++;
     }
   }
 
-  if (currentVideoCount < 5) {
+  if (currentVideoCount < videoTarget) {
     const totalWait = process.env.DEBUG_CALL === 'true' ? '1m 30s' : '1m';
-    const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/5 videos). Cancelling worker.`;
+    const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/${videoTarget} videos). Cancelling worker.`;
     console.error(errorMsg);
     throw new Error(errorMsg);
   }
