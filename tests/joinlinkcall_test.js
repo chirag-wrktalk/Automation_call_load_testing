@@ -255,7 +255,7 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   const selectedCallUrl = callUrls[urlIndex];
   const callLinkDisplayName = `call-link-${urlIndex + 1}`;
 
-  const videoTarget = parallelCount;
+  const videoTarget = parallelCount>=5?5:parallelCount; // Expect at least 5 videos or (total workers - 1) if less than 5
 
   // Phase 0: Staggered Start (Spread joins over 15 seconds)
   const staggerWait = Math.random() * 15;
