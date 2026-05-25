@@ -1,0 +1,20 @@
+{
+  "name": "testing-script",
+  "version": "1.0.0",
+  "description": "CodeceptJS with Playwright automation project",
+  "main": "index.js",
+  "scripts": {
+    "test": "codeceptjs run --steps",
+    "test:call:parallel": "RUN_ID=$(date +%Y-%m-%d-%H-%M-%S) npx codeceptjs run-workers $(node -r dotenv/config -e 'console.log(process.env.PARALLEL_RUNS || 5)') tests/joinlinkcall_test.js --grep \"Verify user can join call\"",
+    "test:login:parallel": "npx codeceptjs run-workers $(node -r dotenv/config -e 'console.log(process.env.PARALLEL_RUNS || 10)') tests/login_test.js"
+  },
+  "devDependencies": {
+    "@codeceptjs/configure": "^1.0.6",
+    "@types/node": "^25.6.0",
+    "codeceptjs": "^3.7.8",
+    "dotenv": "^17.4.2",
+    "playwright": "^1.59.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  }
+}
