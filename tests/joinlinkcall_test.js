@@ -246,7 +246,9 @@ Feature('WebRTC Call Quality Monitoring');
 const parallelCount = parseInt(process.env.PARALLEL_RUNS || '5', 10);
 const instances = Array.from({ length: parallelCount }, (_, i) => i + 1);
 
-Data(instances).Scenario('Verify user can join call and capture performance statistics', { timeout: 900 }, async ({ I, current }) => {
+const scenarioTimeout = (CONFIG.stats.durationMins * 60) + 300; // duration + 5 min buffer for join/finalize
+
+Data(instances).Scenario('Verify user can join call and capture performance statistics', { timeout: scenarioTimeout }, async ({ I, current }) => {
   const baseUsername = process.env.USERNAME || 'User';
   const workerId = current;
   const userName = `${baseUsername}_${workerId}`;
@@ -255,7 +257,7 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   const selectedCallUrl = callUrls[urlIndex];
   const callLinkDisplayName = `call-link-${urlIndex + 1}`;
 
-  const videoTarget = parallelCount>=5?5:parallelCount; // Expect at least 5 videos or (total workers - 1) if less than 5
+  const videoTarget = parallelCount;
 
   // Phase 0: Staggered Start (Spread joins over 15 seconds)
   const staggerWait = Math.random() * 15;
