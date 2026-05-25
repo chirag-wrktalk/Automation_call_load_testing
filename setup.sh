@@ -15,7 +15,7 @@ if [ ! -f .env ]; then
 # Meeting URLs (Comma separated)
 CALL_URLS="https://wrktalk-staging--pr-2200-l7hix42p.web.app/call-link/v/rds-bikn-kkz?domain=rejolut.com&backendUrl=https%3A%2F%2Fapi-chirag.wrktalk.com"
 # Concurrent workers
-PARALLEL_RUNS=4
+PARALLEL_RUNS=3
 # Stats collection frequency
 POLL_INTERVAL=15
 # Total call duration
