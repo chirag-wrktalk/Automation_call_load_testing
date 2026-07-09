@@ -70,22 +70,28 @@ async function joinCall(I, callUrl, userName) {
   await I.waitForText('Join call', 15, CONFIG.selectors.joinButton); // Increased patience
 
   // Sometimes the first click is swallowed by a validation error and the join
-  // screen stays up. Retry until the join button disappears (max 3 attempts).
+  // screen stays up. Success = the pre-join screen (name input) is gone; the
+  // join button itself can linger in a "Joining..." state, so it's not a
+  // reliable signal. The click is guarded because the button can detach
+  // mid-transition when the join is already in progress.
   const maxJoinAttempts = 3;
   for (let attempt = 1; attempt <= maxJoinAttempts; attempt++) {
-    await I.click('Join call', CONFIG.selectors.joinButton);
-    console.log(`[JoinFlow] ${userName}: Join button clicked (attempt ${attempt}/${maxJoinAttempts}).`);
-
-    await I.wait(3); // give the app time to process the join / show a validation error
-
-    const joinButtonStillVisible = await I.grabNumberOfVisibleElements(CONFIG.selectors.joinButton);
-    if (joinButtonStillVisible === 0) {
-      console.log(`[JoinFlow] ${userName}: Join confirmed - join button no longer visible.`);
-      return;
+    try {
+      await I.click('Join call', CONFIG.selectors.joinButton);
+      console.log(`[JoinFlow] ${userName}: Join button clicked (attempt ${attempt}/${maxJoinAttempts}).`);
+    } catch (err) {
+      console.warn(`[JoinFlow] ${userName}: Join click failed on attempt ${attempt} (button likely gone/transitioning): ${err.message}`);
     }
-    console.warn(`[JoinFlow] ${userName}: Join button still visible after attempt ${attempt}, retrying...`);
+
+    try {
+      await I.waitForInvisible(CONFIG.selectors.nameInput, 10);
+      console.log(`[JoinFlow] ${userName}: Join confirmed - pre-join screen is gone.`);
+      return;
+    } catch (err) {
+      console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after attempt ${attempt}, retrying...`);
+    }
   }
-  console.warn(`[JoinFlow] ${userName}: Join button still visible after ${maxJoinAttempts} attempts. Proceeding anyway - video check will catch a failed join.`);
+  console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after ${maxJoinAttempts} attempts. Proceeding anyway - video check will catch a failed join.`);
 }
 
 /**
