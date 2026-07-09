@@ -68,8 +68,24 @@ async function joinCall(I, callUrl, userName) {
   console.log(`[JoinFlow] ${userName}: Username "${userName}" entered.`);
 
   await I.waitForText('Join call', 15, CONFIG.selectors.joinButton); // Increased patience
-  await I.click('Join call', CONFIG.selectors.joinButton);
-  console.log(`[JoinFlow] ${userName}: Join button clicked.`);
+
+  // Sometimes the first click is swallowed by a validation error and the join
+  // screen stays up. Retry until the join button disappears (max 3 attempts).
+  const maxJoinAttempts = 3;
+  for (let attempt = 1; attempt <= maxJoinAttempts; attempt++) {
+    await I.click('Join call', CONFIG.selectors.joinButton);
+    console.log(`[JoinFlow] ${userName}: Join button clicked (attempt ${attempt}/${maxJoinAttempts}).`);
+
+    await I.wait(3); // give the app time to process the join / show a validation error
+
+    const joinButtonStillVisible = await I.grabNumberOfVisibleElements(CONFIG.selectors.joinButton);
+    if (joinButtonStillVisible === 0) {
+      console.log(`[JoinFlow] ${userName}: Join confirmed - join button no longer visible.`);
+      return;
+    }
+    console.warn(`[JoinFlow] ${userName}: Join button still visible after attempt ${attempt}, retrying...`);
+  }
+  console.warn(`[JoinFlow] ${userName}: Join button still visible after ${maxJoinAttempts} attempts. Proceeding anyway - video check will catch a failed join.`);
 }
 
 /**
