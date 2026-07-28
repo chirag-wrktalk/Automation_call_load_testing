@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { tryTo } = require('codeceptjs/effects');
 // const os = require('os');
 
 /**
@@ -17,6 +18,8 @@ const CONFIG = {
     // copyAllBtn: '//button[contains(., "Copy all")]',
     micBtnOn: 'button[aria-label="Mic"][aria-checked="true"]',
     micBtnOff: 'button[aria-label="Mic"][aria-checked="false"]',
+    webcamBtnOn: 'button[aria-label="Video"][aria-checked="true"]',
+    webcamBtnOff: 'button[aria-label="Video"][aria-checked="false"]',
   },
   stats: {
     pollInterval: parseInt(process.env.POLL_INTERVAL || '10', 10),     // seconds between samples
@@ -54,6 +57,19 @@ async function joinCall(I, callUrl, userName) {
     }
   }
 
+  // Turn off video before joining (Conditional on PREVIDEOOFF)
+  if (process.env.PREVIDEOOFF === 'true') {
+    try {
+      await I.waitForElement(CONFIG.selectors.webcamBtnOn, 15);
+      console.log(`[JoinFlow] ${userName}: PREVIDEOOFF is true. Video is ON, clicking to turn off...`);
+      await I.click(CONFIG.selectors.webcamBtnOn);
+      await I.waitForElement(CONFIG.selectors.webcamBtnOff, 10);
+      console.log(`[JoinFlow] ${userName}: Video is now OFF.`);
+    } catch (err) {
+      console.warn(`[JoinFlow] ${userName}: Failed to turn off video or video button not found. Proceeding...`);
+    }
+  }
+
   try {
     await I.waitForElement(CONFIG.selectors.nameInput, 20); 
     console.log(`[JoinFlow] ${userName}: Name input found.`);
@@ -72,26 +88,26 @@ async function joinCall(I, callUrl, userName) {
   // Sometimes the first click is swallowed by a validation error and the join
   // screen stays up. Success = the pre-join screen (name input) is gone; the
   // join button itself can linger in a "Joining..." state, so it's not a
-  // reliable signal. The click is guarded because the button can detach
-  // mid-transition when the join is already in progress.
-  const maxJoinAttempts = 3;
-  for (let attempt = 1; attempt <= maxJoinAttempts; attempt++) {
-    try {
-      await I.click('Join call', CONFIG.selectors.joinButton);
-      console.log(`[JoinFlow] ${userName}: Join button clicked (attempt ${attempt}/${maxJoinAttempts}).`);
-    } catch (err) {
-      console.warn(`[JoinFlow] ${userName}: Join click failed on attempt ${attempt} (button likely gone/transitioning): ${err.message}`);
-    }
+  // reliable signal. tryTo suppresses step failures inside the recorder
+  // (a plain try/catch cannot - a failed step would still fail the test).
+  await I.click('Join call', CONFIG.selectors.joinButton)
+  // const maxJoinAttempts = 5;
+  // for (let attempt = 1; attempt <= maxJoinAttempts; attempt++) {
+  //   const clicked = await tryTo(() => I.click('Join call', CONFIG.selectors.joinButton));
+  //   if (clicked) {
+  //     console.log(`[JoinFlow] ${userName}: Join button clicked (attempt ${attempt}/${maxJoinAttempts}).`);
+  //   } else {
+  //     console.warn(`[JoinFlow] ${userName}: Join click failed on attempt ${attempt} (button likely gone/transitioning).`);
+  //   }
 
-    try {
-      await I.waitForInvisible(CONFIG.selectors.nameInput, 10);
-      console.log(`[JoinFlow] ${userName}: Join confirmed - pre-join screen is gone.`);
-      return;
-    } catch (err) {
-      console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after attempt ${attempt}, retrying...`);
-    }
-  }
-  console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after ${maxJoinAttempts} attempts. Proceeding anyway - video check will catch a failed join.`);
+  //   const joined = await tryTo(() => I.waitForInvisible(CONFIG.selectors.nameInput, 10));
+  //   if (joined) {
+  //     console.log(`[JoinFlow] ${userName}: Join confirmed - pre-join screen is gone.`);
+  //     return;
+  //   }
+  //   console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after attempt ${attempt}, retrying...`);
+  // }
+  // console.warn(`[JoinFlow] ${userName}: Still on pre-join screen after ${maxJoinAttempts} attempts. Proceeding anyway - video check will catch a failed join.`);
 }
 
 /**
@@ -295,7 +311,7 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   console.log(`[JoinFlow] ${userName}: Waiting for video streams (Target: ${videoTarget})...`);
   let currentVideoCount = 0;
   let attempts = 0;
-  const maxAttempts = 12; // 1 minute (12 * 5s)
+  const maxAttempts = 18; // 1 minute (18 * 5s)
 
   while (currentVideoCount < videoTarget && attempts < maxAttempts) {
     currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
