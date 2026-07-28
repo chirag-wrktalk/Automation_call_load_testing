@@ -33,10 +33,40 @@ const CONFIG = {
  */
 
 /**
+ * Resolves the desired media (mic/video) state for a given worker based on the
+ * configured distribution. Workers are assigned to a category in index order:
+ *
+ *   PEERS_MIC_AND_VIDEO  -> mic ON,  video ON
+ *   PEERS_MIC_ONLY       -> mic ON,  video OFF
+ *   PEERS_VIDEO_ONLY     -> mic OFF, video ON
+ *   (any leftover peers) -> mic OFF, video OFF
+ *
+ * If none of the PEERS_* vars are set, falls back to the legacy PREMUTE /
+ * PREVIDEOOFF flags (default: mic ON, video ON).
+ */
+function resolveMediaState(workerId) {
+  const micAndVideo = parseInt(process.env.PEERS_MIC_AND_VIDEO || '0', 10);
+  const micOnly = parseInt(process.env.PEERS_MIC_ONLY || '0', 10);
+  const videoOnly = parseInt(process.env.PEERS_VIDEO_ONLY || '0', 10);
+
+  if (micAndVideo + micOnly + videoOnly === 0) {
+    return {
+      micOn: process.env.PREMUTE !== 'true',
+      videoOn: process.env.PREVIDEOOFF !== 'true',
+    };
+  }
+
+  if (workerId <= micAndVideo) return { micOn: true, videoOn: true };
+  if (workerId <= micAndVideo + micOnly) return { micOn: true, videoOn: false };
+  if (workerId <= micAndVideo + micOnly + videoOnly) return { micOn: false, videoOn: true };
+  return { micOn: false, videoOn: false }; // Leftover peers: both OFF
+}
+
+/**
  * Executes the UI interaction flow to enter a name and join the call.
  */
-async function joinCall(I, callUrl, userName) {
-  console.log(`[JoinFlow] Starting join process for ${userName} at ${callUrl}`);
+async function joinCall(I, callUrl, userName, mediaState) {
+  console.log(`[JoinFlow] Starting join process for ${userName} at ${callUrl} (mic: ${mediaState.micOn ? 'ON' : 'OFF'}, video: ${mediaState.videoOn ? 'ON' : 'OFF'})`);
   await I.usePlaywrightTo('grant media permissions', async ({ browserContext }) => {
     await browserContext.grantPermissions(['camera', 'microphone']);
   });
@@ -44,11 +74,12 @@ async function joinCall(I, callUrl, userName) {
   await I.amOnPage(callUrl);
   console.log(`[JoinFlow] ${userName}: Navigation to page complete.`);
 
-  // Mute before joining (Conditional on PREMUTE)
-  if (process.env.PREMUTE === 'true') {
+  // Configure mic state before joining. The pre-join screen defaults to mic ON,
+  // so only act when this peer should be muted.
+  if (!mediaState.micOn) {
     try {
       await I.waitForElement(CONFIG.selectors.micBtnOn, 15);
-      console.log(`[JoinFlow] ${userName}: PREMUTE is true. Mic is ON, clicking to mute...`);
+      console.log(`[JoinFlow] ${userName}: Mic is ON, clicking to mute...`);
       await I.click(CONFIG.selectors.micBtnOn);
       await I.waitForElement(CONFIG.selectors.micBtnOff, 10);
       console.log(`[JoinFlow] ${userName}: Mic is now OFF (Muted).`);
@@ -57,11 +88,12 @@ async function joinCall(I, callUrl, userName) {
     }
   }
 
-  // Turn off video before joining (Conditional on PREVIDEOOFF)
-  if (process.env.PREVIDEOOFF === 'true') {
+  // Configure video state before joining. The pre-join screen defaults to video ON,
+  // so only act when this peer should have its camera off.
+  if (!mediaState.videoOn) {
     try {
       await I.waitForElement(CONFIG.selectors.webcamBtnOn, 15);
-      console.log(`[JoinFlow] ${userName}: PREVIDEOOFF is true. Video is ON, clicking to turn off...`);
+      console.log(`[JoinFlow] ${userName}: Video is ON, clicking to turn off...`);
       await I.click(CONFIG.selectors.webcamBtnOn);
       await I.waitForElement(CONFIG.selectors.webcamBtnOff, 10);
       console.log(`[JoinFlow] ${userName}: Video is now OFF.`);
@@ -295,7 +327,7 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   const selectedCallUrl = callUrls[urlIndex];
   const callLinkDisplayName = `call-link-${urlIndex + 1}`;
 
-  const videoTarget = parallelCount>=5?5:parallelCount; // Expect at least 5 videos or (total workers - 1) if less than 5
+  const mediaState = resolveMediaState(workerId);
 
   // Phase 0: Staggered Start (Spread joins over 15 seconds)
   const staggerWait = Math.random() * 15;
@@ -303,15 +335,15 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   await I.wait(staggerWait);
 
   // Phase 1: Join the Call
-  await joinCall(I, selectedCallUrl, userName);
+  await joinCall(I, selectedCallUrl, userName, mediaState);
 
   // const { sessionPath, runPath } = setupStatsDirectory(userName, callLinkDisplayName);
 
-  // Phase 2: Wait for Media (Tiered Wait Logic)
-  console.log(`[JoinFlow] ${userName}: Waiting for video streams (Target: ${videoTarget})...`);
-  let currentVideoCount = 0;
-  let attempts = 0;
-  const maxAttempts = 18; // 1 minute (18 * 5s)
+  // Phase 2: Wait for Media (Tiered Wait Logic) - target gate disabled for mixed media runs.
+
+  // let currentVideoCount = 0;
+  // let attempts = 0;
+  // const maxAttempts = 18; // 1 minute (18 * 5s)
 
   // while (currentVideoCount < videoTarget && attempts < maxAttempts) {
   //   currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
@@ -351,7 +383,7 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   //   throw new Error(errorMsg);
   // }
 
-  console.log(`[JoinFlow] ${userName}: Joined call successfully with ${currentVideoCount} video streams.`);
+  console.log(`[JoinFlow] ${userName}: Join flow complete (mic: ${mediaState.micOn ? 'ON' : 'OFF'}, video: ${mediaState.videoOn ? 'ON' : 'OFF'}).`);
 
   // Phase 3: Perform ICE Candidate Audit
   await auditIceCandidates(I);
