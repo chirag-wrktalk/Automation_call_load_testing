@@ -313,43 +313,43 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   let attempts = 0;
   const maxAttempts = 18; // 1 minute (18 * 5s)
 
-  // while (currentVideoCount < videoTarget && attempts < maxAttempts) {
-  //   currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-  //   console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: ${videoTarget}, Attempt: ${attempts + 1}/${maxAttempts})`);
+  while (currentVideoCount < videoTarget && attempts < maxAttempts) {
+    currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
+    console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: ${videoTarget}, Attempt: ${attempts + 1}/${maxAttempts})`);
 
-  //   if (currentVideoCount >= videoTarget) break;
+    if (currentVideoCount >= videoTarget) break;
 
-  //   await I.wait(5);
-  //   attempts++;
-  // }
+    await I.wait(5);
+    attempts++;
+  }
 
   // Extension Phase: If still below target, record screenshots and wait 30s more (Conditional on DEBUG_CALL)
-  // if (currentVideoCount < videoTarget && process.env.DEBUG_CALL === 'true') {
-  //   const runGroup = process.env.RUN_ID || new Date().toISOString().substring(0, 16).replace(/[:T]/g, '-');
-  //   const failPath = path.join(__dirname, '..', 'stats', runGroup, callLinkDisplayName, 'failed-to-join', userName);
-  //   if (!fs.existsSync(failPath)) fs.mkdirSync(failPath, { recursive: true });
+  if (currentVideoCount < videoTarget && process.env.DEBUG_CALL === 'true') {
+    const runGroup = process.env.RUN_ID || new Date().toISOString().substring(0, 16).replace(/[:T]/g, '-');
+    const failPath = path.join(__dirname, '..', 'stats', runGroup, callLinkDisplayName, 'failed-to-join', userName);
+    if (!fs.existsSync(failPath)) fs.mkdirSync(failPath, { recursive: true });
 
-  //   console.warn(`[JoinFlow] ${userName}: Target not met in 1 min. DEBUG_CALL is true - starting 30s recording phase...`);
+    console.warn(`[JoinFlow] ${userName}: Target not met in 1 min. DEBUG_CALL is true - starting 30s recording phase...`);
 
-  //   let extraAttempts = 0;
-  //   while (currentVideoCount < videoTarget && extraAttempts < 6) { // 30 seconds (6 * 5s)
-  //     // Save screenshot at each step of the extension
-  //     await I.saveScreenshot(path.join(failPath, `failure_step_${extraAttempts + 1}.png`));
+    let extraAttempts = 0;
+    while (currentVideoCount < videoTarget && extraAttempts < 6) { // 30 seconds (6 * 5s)
+      // Save screenshot at each step of the extension
+      await I.saveScreenshot(path.join(failPath, `failure_step_${extraAttempts + 1}.png`));
 
-  //     currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-  //     console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/${videoTarget} (Attempt: ${extraAttempts + 1}/6)`);
-  //     if (currentVideoCount >= videoTarget) break;
-  //     await I.wait(5);
-  //     extraAttempts++;
-  //   }
-  // }
+      currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
+      console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/${videoTarget} (Attempt: ${extraAttempts + 1}/6)`);
+      if (currentVideoCount >= videoTarget) break;
+      await I.wait(5);
+      extraAttempts++;
+    }
+  }
 
-  // if (currentVideoCount < videoTarget) {
-  //   const totalWait = process.env.DEBUG_CALL === 'true' ? '1m 30s' : '1m';
-  //   const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/${videoTarget} videos). Cancelling worker.`;
-  //   console.error(errorMsg);
-  //   throw new Error(errorMsg);
-  // }
+  if (currentVideoCount < videoTarget) {
+    const totalWait = process.env.DEBUG_CALL === 'true' ? '1m 30s' : '1m';
+    const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/${videoTarget} videos). Cancelling worker.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
 
   console.log(`[JoinFlow] ${userName}: Joined call successfully with ${currentVideoCount} video streams.`);
 
