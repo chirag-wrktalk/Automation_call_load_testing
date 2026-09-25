@@ -20,6 +20,7 @@ const CONFIG = {
     micBtnOff: 'button[aria-label="Mic"][aria-checked="false"]',
     webcamBtnOn: 'button[aria-label="Video"][aria-checked="true"]',
     webcamBtnOff: 'button[aria-label="Video"][aria-checked="false"]',
+    continueInBrowserBtn: '[data-testid="validateCallLink.continueInBrowser"]',
   },
   stats: {
     pollInterval: parseInt(process.env.POLL_INTERVAL || '10', 10),     // seconds between samples
@@ -33,16 +34,40 @@ const CONFIG = {
  */
 
 /**
+ * The call-link page shows an "Open in app / Continue" choice on desktop
+ * browsers in place of the pre-join form. Click "Continue" to stay in the
+ * browser; a no-op when the choice isn't shown.
+ */
+async function dismissOpenInApp(I, userName) {
+  const shown = await tryTo(() => I.waitForVisible(CONFIG.selectors.continueInBrowserBtn, 10));
+  if (shown) {
+    await I.click(CONFIG.selectors.continueInBrowserBtn);
+    console.log(`[JoinFlow] ${userName}: "Open in app" prompt dismissed - continuing in browser.`);
+  }
+}
+
+/**
  * Executes the UI interaction flow to enter a name and join the call.
  */
 async function joinCall(I, callUrl, userName) {
   console.log(`[JoinFlow] Starting join process for ${userName} at ${callUrl}`);
-  await I.usePlaywrightTo('grant media permissions', async ({ browserContext }) => {
+  await I.usePlaywrightTo('grant media permissions and skip desktop-app deeplink', async ({ browserContext }) => {
     await browserContext.grantPermissions(['camera', 'microphone']);
+    // The web app auto-redirects to wrktalk:// on first load, which pops the
+    // browser's native "Open WrkTalk?" dialog (not clickable from Playwright).
+    // It skips that redirect once the user has chosen to stay in the browser,
+    // so pre-set that choice before any page script runs.
+    await browserContext.addInitScript(() => {
+      try {
+        window.sessionStorage.setItem('open-in-app-dismissed', 'true');
+      } catch (e) {}
+    });
   });
 
   await I.amOnPage(callUrl);
   console.log(`[JoinFlow] ${userName}: Navigation to page complete.`);
+
+  await dismissOpenInApp(I, userName);
 
   // Mute before joining (Conditional on PREMUTE)
   if (process.env.PREMUTE === 'true') {
@@ -76,6 +101,7 @@ async function joinCall(I, callUrl, userName) {
   } catch (err) {
     console.warn(`[JoinFlow] ${userName}: [Retry] Target element ${CONFIG.selectors.nameInput} not found, refreshing page...`);
     await I.refreshPage();
+    await dismissOpenInApp(I, userName);
     await I.waitForElement(CONFIG.selectors.nameInput, 20); 
     console.log(`[JoinFlow] ${userName}: Name input found after refresh.`);
   }
