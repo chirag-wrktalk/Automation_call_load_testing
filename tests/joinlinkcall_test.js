@@ -34,6 +34,25 @@ const CONFIG = {
  */
 
 /**
+ * Dumps what the page is actually showing (URL, visible text, recent browser
+ * errors, screenshot) so a stuck page can be diagnosed from the run logs.
+ */
+async function logPageState(I, userName, label) {
+  try {
+    const url = await I.grabCurrentUrl();
+    const text = await I.executeScript(() => (document.body ? document.body.innerText : '').slice(0, 500));
+    const errors = await I.executeScript(() => (window.__browserErrors || []).slice(-10));
+    console.warn(`[PageState] ${userName} (${label}): URL = ${url}`);
+    console.warn(`[PageState] ${userName} (${label}): Visible text = ${JSON.stringify(text)}`);
+    console.warn(`[PageState] ${userName} (${label}): Recent browser errors = ${JSON.stringify(errors)}`);
+    await I.saveScreenshot(`${label}_${userName}.png`);
+    console.warn(`[PageState] ${userName} (${label}): Screenshot saved to output/${label}_${userName}.png`);
+  } catch (err) {
+    console.warn(`[PageState] ${userName} (${label}): Could not capture page state - ${err.message}`);
+  }
+}
+
+/**
  * The call-link page shows an "Open in app / Continue" choice on desktop
  * browsers in place of the pre-join form. Click "Continue" to stay in the
  * browser; a no-op when the choice isn't shown.
@@ -49,6 +68,7 @@ async function dismissOpenInApp(I, userName) {
   ));
   if (!loaded) {
     console.warn(`[JoinFlow] ${userName}: Neither "Open in app" prompt nor name input appeared.`);
+    await logPageState(I, userName, 'prejoin_not_loaded');
     return;
   }
   const shown = await I.grabNumberOfVisibleElements(CONFIG.selectors.continueInBrowserBtn);
@@ -73,6 +93,16 @@ async function joinCall(I, callUrl, userName) {
       try {
         window.sessionStorage.setItem('open-in-app-dismissed', 'true');
       } catch (e) {}
+      // Collect page errors so logPageState can report them.
+      window.__browserErrors = [];
+      const record = (msg) => window.__browserErrors.push(`${new Date().toISOString()} ${msg}`);
+      window.addEventListener('error', (e) => record(`error: ${e.message}`));
+      window.addEventListener('unhandledrejection', (e) => record(`unhandledrejection: ${e.reason && e.reason.message ? e.reason.message : e.reason}`));
+      const origConsoleError = console.error;
+      console.error = (...args) => {
+        record(`console.error: ${args.map(a => (a && a.message) || String(a)).join(' ').slice(0, 300)}`);
+        origConsoleError.apply(console, args);
+      };
     });
   });
 
