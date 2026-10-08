@@ -39,8 +39,20 @@ const CONFIG = {
  * browser; a no-op when the choice isn't shown.
  */
 async function dismissOpenInApp(I, userName) {
-  const shown = await tryTo(() => I.waitForVisible(CONFIG.selectors.continueInBrowserBtn, 10));
-  if (shown) {
+  // Wait for whichever pre-join screen renders first - the "Open in app"
+  // choice or the name form. On a loaded/slow server the link validation can
+  // take well over 10s, and a fixed short wait for the Continue button would
+  // give up while the page is still loading.
+  const loaded = await tryTo(() => I.waitForVisible(
+    `${CONFIG.selectors.continueInBrowserBtn}, ${CONFIG.selectors.nameInput}`,
+    parseInt(process.env.PAGE_LOAD_TIMEOUT || '60', 10),
+  ));
+  if (!loaded) {
+    console.warn(`[JoinFlow] ${userName}: Neither "Open in app" prompt nor name input appeared.`);
+    return;
+  }
+  const shown = await I.grabNumberOfVisibleElements(CONFIG.selectors.continueInBrowserBtn);
+  if (shown > 0) {
     await I.click(CONFIG.selectors.continueInBrowserBtn);
     console.log(`[JoinFlow] ${userName}: "Open in app" prompt dismissed - continuing in browser.`);
   }
@@ -78,7 +90,15 @@ async function joinCall(I, callUrl, userName) {
       await I.waitForElement(CONFIG.selectors.micBtnOff, 10);
       console.log(`[JoinFlow] ${userName}: Mic is now OFF (Muted).`);
     } catch (err) {
-      console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
+      const alreadyMuted = await I.grabNumberOfVisibleElements(CONFIG.selectors.micBtnOff);
+      if (alreadyMuted > 0) {
+        console.log(`[JoinFlow] ${userName}: Mic was already OFF (no mic permission/device on this machine).`);
+      } else {
+        console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
+        if (process.env.DEBUG_CALL === 'true') {
+          await I.saveScreenshot(`premute_failed_${userName}.png`);
+        }
+      }
     }
   }
 
