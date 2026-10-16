@@ -20,6 +20,7 @@ const CONFIG = {
     micBtnOff: 'button[aria-label="Mic"][aria-checked="false"]',
     webcamBtnOn: 'button[aria-label="Video"][aria-checked="true"]',
     webcamBtnOff: 'button[aria-label="Video"][aria-checked="false"]',
+    continueInBrowserBtn: '[data-testid="validateCallLink.continueInBrowser"]',
   },
   stats: {
     pollInterval: parseInt(process.env.POLL_INTERVAL || '10', 10),     // seconds between samples
@@ -61,22 +62,86 @@ function resolveMediaState(workerId) {
   if (workerId <= micAndVideo + micOnly + videoOnly) return { micOn: false, videoOn: true };
   return { micOn: false, videoOn: false }; // Leftover peers: both OFF
 }
+/*
+ * Dumps what the page is actually showing (URL, visible text, recent browser
+ * errors, screenshot) so a stuck page can be diagnosed from the run logs.
+ */
+async function logPageState(I, userName, label) {
+  try {
+    const url = await I.grabCurrentUrl();
+    const text = await I.executeScript(() => (document.body ? document.body.innerText : '').slice(0, 500));
+    const errors = await I.executeScript(() => (window.__browserErrors || []).slice(-10));
+    console.warn(`[PageState] ${userName} (${label}): URL = ${url}`);
+    console.warn(`[PageState] ${userName} (${label}): Visible text = ${JSON.stringify(text)}`);
+    console.warn(`[PageState] ${userName} (${label}): Recent browser errors = ${JSON.stringify(errors)}`);
+    await I.saveScreenshot(`${label}_${userName}.png`);
+    console.warn(`[PageState] ${userName} (${label}): Screenshot saved to output/${label}_${userName}.png`);
+  } catch (err) {
+    console.warn(`[PageState] ${userName} (${label}): Could not capture page state - ${err.message}`);
+  }
+}
+
+/**
+ * The call-link page shows an "Open in app / Continue" choice on desktop
+ * browsers in place of the pre-join form. Click "Continue" to stay in the
+ * browser; a no-op when the choice isn't shown.
+ */
+async function dismissOpenInApp(I, userName) {
+  // Wait for whichever pre-join screen renders first - the "Open in app"
+  // choice or the name form. On a loaded/slow server the link validation can
+  // take well over 10s, and a fixed short wait for the Continue button would
+  // give up while the page is still loading.
+  const loaded = await tryTo(() => I.waitForVisible(
+    `${CONFIG.selectors.continueInBrowserBtn}, ${CONFIG.selectors.nameInput}`,
+    parseInt(process.env.PAGE_LOAD_TIMEOUT || '60', 10),
+  ));
+  if (!loaded) {
+    console.warn(`[JoinFlow] ${userName}: Neither "Open in app" prompt nor name input appeared.`);
+    await logPageState(I, userName, 'prejoin_not_loaded');
+    return;
+  }
+  const shown = await I.grabNumberOfVisibleElements(CONFIG.selectors.continueInBrowserBtn);
+  if (shown > 0) {
+    await I.click(CONFIG.selectors.continueInBrowserBtn);
+    console.log(`[JoinFlow] ${userName}: "Open in app" prompt dismissed - continuing in browser.`);
+  }
+}
 
 /**
  * Executes the UI interaction flow to enter a name and join the call.
  */
 async function joinCall(I, callUrl, userName, mediaState) {
   console.log(`[JoinFlow] Starting join process for ${userName} at ${callUrl} (mic: ${mediaState.micOn ? 'ON' : 'OFF'}, video: ${mediaState.videoOn ? 'ON' : 'OFF'})`);
-  await I.usePlaywrightTo('grant media permissions', async ({ browserContext }) => {
+ await I.usePlaywrightTo('grant media permissions and skip desktop-app deeplink', async ({ browserContext }) => {
     await browserContext.grantPermissions(['camera', 'microphone']);
+    // The web app auto-redirects to wrktalk:// on first load, which pops the
+    // browser's native "Open WrkTalk?" dialog (not clickable from Playwright).
+    // It skips that redirect once the user has chosen to stay in the browser,
+    // so pre-set that choice before any page script runs.
+    await browserContext.addInitScript(() => {
+      try {
+        window.sessionStorage.setItem('open-in-app-dismissed', 'true');
+      } catch (e) {}
+      // Collect page errors so logPageState can report them.
+      window.__browserErrors = [];
+      const record = (msg) => window.__browserErrors.push(`${new Date().toISOString()} ${msg}`);
+      window.addEventListener('error', (e) => record(`error: ${e.message}`));
+      window.addEventListener('unhandledrejection', (e) => record(`unhandledrejection: ${e.reason && e.reason.message ? e.reason.message : e.reason}`));
+      const origConsoleError = console.error;
+      console.error = (...args) => {
+        record(`console.error: ${args.map(a => (a && a.message) || String(a)).join(' ').slice(0, 300)}`);
+        origConsoleError.apply(console, args);
+      };
+    });
   });
 
   await I.amOnPage(callUrl);
   console.log(`[JoinFlow] ${userName}: Navigation to page complete.`);
 
-  // Configure mic state before joining. The pre-join screen defaults to mic ON,
-  // so only act when this peer should be muted.
-  if (!mediaState.micOn) {
+  await dismissOpenInApp(I, userName);
+
+  // Mute before joining (Conditional on PREMUTE)
+   if (!mediaState.micOn) {
     try {
       await I.waitForElement(CONFIG.selectors.micBtnOn, 15);
       console.log(`[JoinFlow] ${userName}: Mic is ON, clicking to mute...`);
@@ -84,7 +149,15 @@ async function joinCall(I, callUrl, userName, mediaState) {
       await I.waitForElement(CONFIG.selectors.micBtnOff, 10);
       console.log(`[JoinFlow] ${userName}: Mic is now OFF (Muted).`);
     } catch (err) {
-      console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
+      const alreadyMuted = await I.grabNumberOfVisibleElements(CONFIG.selectors.micBtnOff);
+      if (alreadyMuted > 0) {
+        console.log(`[JoinFlow] ${userName}: Mic was already OFF (no mic permission/device on this machine).`);
+      } else {
+        console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
+        if (process.env.DEBUG_CALL === 'true') {
+          await I.saveScreenshot(`premute_failed_${userName}.png`);
+        }
+      }
     }
   }
 
@@ -108,6 +181,7 @@ async function joinCall(I, callUrl, userName, mediaState) {
   } catch (err) {
     console.warn(`[JoinFlow] ${userName}: [Retry] Target element ${CONFIG.selectors.nameInput} not found, refreshing page...`);
     await I.refreshPage();
+    await dismissOpenInApp(I, userName);
     await I.waitForElement(CONFIG.selectors.nameInput, 20); 
     console.log(`[JoinFlow] ${userName}: Name input found after refresh.`);
   }
@@ -345,43 +419,43 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
   // let attempts = 0;
   // const maxAttempts = 18; // 1 minute (18 * 5s)
 
-  // while (currentVideoCount < videoTarget && attempts < maxAttempts) {
-  //   currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-  //   console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: ${videoTarget}, Attempt: ${attempts + 1}/${maxAttempts})`);
+  while (currentVideoCount < videoTarget && attempts < maxAttempts) {
+    currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
+    console.warn(`[JoinFlow] ${userName}: Current visible video streams: ${currentVideoCount} (Target: ${videoTarget}, Attempt: ${attempts + 1}/${maxAttempts})`);
 
-  //   if (currentVideoCount >= videoTarget) break;
+    if (currentVideoCount >= videoTarget) break;
 
-  //   await I.wait(5);
-  //   attempts++;
-  // }
+    await I.wait(5);
+    attempts++;
+  }
 
   // Extension Phase: If still below target, record screenshots and wait 30s more (Conditional on DEBUG_CALL)
-  // if (currentVideoCount < videoTarget && process.env.DEBUG_CALL === 'true') {
-  //   const runGroup = process.env.RUN_ID || new Date().toISOString().substring(0, 16).replace(/[:T]/g, '-');
-  //   const failPath = path.join(__dirname, '..', 'stats', runGroup, callLinkDisplayName, 'failed-to-join', userName);
-  //   if (!fs.existsSync(failPath)) fs.mkdirSync(failPath, { recursive: true });
+  if (currentVideoCount < videoTarget && process.env.DEBUG_CALL === 'true') {
+    const runGroup = process.env.RUN_ID || new Date().toISOString().substring(0, 16).replace(/[:T]/g, '-');
+    const failPath = path.join(__dirname, '..', 'stats', runGroup, callLinkDisplayName, 'failed-to-join', userName);
+    if (!fs.existsSync(failPath)) fs.mkdirSync(failPath, { recursive: true });
 
-  //   console.warn(`[JoinFlow] ${userName}: Target not met in 1 min. DEBUG_CALL is true - starting 30s recording phase...`);
+    console.warn(`[JoinFlow] ${userName}: Target not met in 1 min. DEBUG_CALL is true - starting 30s recording phase...`);
 
-  //   let extraAttempts = 0;
-  //   while (currentVideoCount < videoTarget && extraAttempts < 6) { // 30 seconds (6 * 5s)
-  //     // Save screenshot at each step of the extension
-  //     await I.saveScreenshot(path.join(failPath, `failure_step_${extraAttempts + 1}.png`));
+    let extraAttempts = 0;
+    while (currentVideoCount < videoTarget && extraAttempts < 6) { // 30 seconds (6 * 5s)
+      // Save screenshot at each step of the extension
+      await I.saveScreenshot(path.join(failPath, `failure_step_${extraAttempts + 1}.png`));
 
-  //     currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
-  //     console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/${videoTarget} (Attempt: ${extraAttempts + 1}/6)`);
-  //     if (currentVideoCount >= videoTarget) break;
-  //     await I.wait(5);
-  //     extraAttempts++;
-  //   }
-  // }
+      currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
+      console.warn(`[JoinFlow] ${userName}: EXTENDED WAIT - Videos: ${currentVideoCount}/${videoTarget} (Attempt: ${extraAttempts + 1}/6)`);
+      if (currentVideoCount >= videoTarget) break;
+      await I.wait(5);
+      extraAttempts++;
+    }
+  }
 
-  // if (currentVideoCount < videoTarget) {
-  //   const totalWait = process.env.DEBUG_CALL === 'true' ? '1m 30s' : '1m';
-  //   const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/${videoTarget} videos). Cancelling worker.`;
-  //   console.error(errorMsg);
-  //   throw new Error(errorMsg);
-  // }
+  if (currentVideoCount < videoTarget) {
+    const totalWait = process.env.DEBUG_CALL === 'true' ? '1m 30s' : '1m';
+    const errorMsg = `[JoinFlow] ${userName}: FAILED to join call correctly after ${totalWait} (Saw ${currentVideoCount}/${videoTarget} videos). Cancelling worker.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
 
   console.log(`[JoinFlow] ${userName}: Join flow complete (mic: ${mediaState.micOn ? 'ON' : 'OFF'}, video: ${mediaState.videoOn ? 'ON' : 'OFF'}).`);
 
