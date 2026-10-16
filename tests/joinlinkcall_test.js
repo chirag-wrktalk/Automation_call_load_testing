@@ -415,9 +415,10 @@ Data(instances).Scenario('Verify user can join call and capture performance stat
 
   // Phase 2: Wait for Media (Tiered Wait Logic) - target gate disabled for mixed media runs.
 
-  // let currentVideoCount = 0;
-  // let attempts = 0;
-  // const maxAttempts = 18; // 1 minute (18 * 5s)
+  let currentVideoCount = 0;
+  let attempts = 0;
+  let videoTarget = 1; // Default target for visible video streams
+  const maxAttempts = 18; // 1 minute (18 * 5s)
 
   while (currentVideoCount < videoTarget && attempts < maxAttempts) {
     currentVideoCount = await I.grabNumberOfVisibleElements(CONFIG.selectors.videoStream);
