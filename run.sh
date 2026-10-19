@@ -1,5 +1,15 @@
 #!/bin/bash
 # run.sh - Interactive WebRTC Load Test Runner
+#
+# Usage:
+#   ./run.sh              Run in the foreground (stays awake, logs to file + screen)
+#   ./run.sh --detach     Run in the background (survives closing the terminal)
+#                         Follow progress with: tail -f logs/<the log file printed below>
+
+DETACH=0
+if [ "$1" = "--detach" ] || [ "$1" = "-d" ]; then
+    DETACH=1
+fi
 
 echo "--- WebRTC Load Test Configuration ---"
 
@@ -60,5 +70,31 @@ echo "Target   : ${CALL_URLS:- (Reading from .env)}"
 echo "Mic+Video: ${PEERS_MIC_AND_VIDEO:-0} | Mic only: ${PEERS_MIC_ONLY:-0} | Video only: ${PEERS_VIDEO_ONLY:-0} | Rest: mic+video OFF"
 echo "--------------------------"
 
-# Execute the parallel test command
-npm run test:call:parallel
+# Prepare a timestamped log file so output is never lost with the terminal
+mkdir -p logs
+LOG_FILE="logs/loadtest-$(date +%Y-%m-%d-%H-%M-%S).log"
+echo "Log file : $LOG_FILE"
+echo "--------------------------"
+
+# caffeinate flags:
+#   -d  prevent the display from sleeping
+#   -i  prevent the system from idle sleeping
+#   -m  prevent the disk from idle sleeping
+#   -s  prevent system sleep while on AC power
+#   -u  declare the user is active (keeps the machine awake even with the lid open and screen off)
+# Note: macOS still sleeps on an actual lid close. Keep the lid open, or connect
+# an external display / use `pmset` if you need lid-closed (clamshell) runs.
+CAFFEINATE=(caffeinate -dimsu)
+
+if [ "$DETACH" -eq 1 ]; then
+    # nohup + background: immune to the terminal closing or the SSH session dropping
+    nohup "${CAFFEINATE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
+    RUN_PID=$!
+    echo "$RUN_PID" > logs/loadtest.pid
+    echo "Started in background (PID $RUN_PID)."
+    echo "  Follow logs : tail -f $LOG_FILE"
+    echo "  Stop the run: kill $RUN_PID"
+else
+    # Foreground: tee keeps the live output you are used to AND writes the log file
+    "${CAFFEINATE[@]}" npm run test:call:parallel 2>&1 | tee "$LOG_FILE"
+fi
