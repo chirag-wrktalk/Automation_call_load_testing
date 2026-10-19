@@ -5,11 +5,50 @@
 #   ./run.sh              Run in the foreground (stays awake, logs to file + screen)
 #   ./run.sh --detach     Run in the background (survives closing the terminal)
 #                         Follow progress with: tail -f logs/<the log file printed below>
+#   ./run.sh --list       Show every detached run and whether it is still alive
+#   ./run.sh --stop <pid> Stop one detached run (and its whole process tree)
 
 DETACH=0
-if [ "$1" = "--detach" ] || [ "$1" = "-d" ]; then
-    DETACH=1
-fi
+case "$1" in
+    --detach|-d)
+        DETACH=1
+        ;;
+    --list|-l)
+        shift
+        printf '%-10s %-8s %s\n' "PID" "STATE" "LOG FILE"
+        found=0
+        for pidfile in logs/*.pid; do
+            [ -e "$pidfile" ] || continue
+            pid=$(cat "$pidfile" 2>/dev/null)
+            [ -n "$pid" ] || continue
+            found=1
+            if kill -0 "$pid" 2>/dev/null; then
+                state="RUNNING"
+            else
+                state="exited"
+            fi
+            printf '%-10s %-8s %s\n' "$pid" "$state" "${pidfile%.pid}.log"
+        done
+        [ "$found" -eq 0 ] && echo "(no detached runs recorded in logs/)"
+        exit 0
+        ;;
+    --stop)
+        target_pid="$2"
+        if [ -z "$target_pid" ]; then
+            echo "Usage: ./run.sh --stop <pid>   (see ./run.sh --list)" >&2
+            exit 1
+        fi
+        # Negate the PID to signal the whole process group, so npm/node/chromium
+        # children die with the parent instead of being orphaned.
+        if kill -TERM -"$target_pid" 2>/dev/null || kill -TERM "$target_pid" 2>/dev/null; then
+            echo "Sent TERM to $target_pid (and its process group)."
+        else
+            echo "No such running process: $target_pid" >&2
+            exit 1
+        fi
+        exit 0
+        ;;
+esac
 
 echo "--- WebRTC Load Test Configuration ---"
 
@@ -104,12 +143,22 @@ fi
 
 if [ "$DETACH" -eq 1 ]; then
     # nohup + background: immune to the terminal closing or the SSH session dropping
-    nohup "${KEEPAWAKE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
+    # setsid gives the run its own process group so --stop can kill the whole
+    # tree (npm -> node -> chromium) rather than just the wrapper.
+    if command -v setsid >/dev/null 2>&1; then
+        setsid nohup "${KEEPAWAKE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
+    else
+        nohup "${KEEPAWAKE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
+    fi
     RUN_PID=$!
-    echo "$RUN_PID" > logs/loadtest.pid
+    # One PID file per run, named to match its log, so concurrent runs
+    # do not overwrite each other.
+    PID_FILE="${LOG_FILE%.log}.pid"
+    echo "$RUN_PID" > "$PID_FILE"
     echo "Started in background (PID $RUN_PID)."
     echo "  Follow logs : tail -f $LOG_FILE"
-    echo "  Stop the run: kill $RUN_PID"
+    echo "  List runs   : ./run.sh --list"
+    echo "  Stop the run: ./run.sh --stop $RUN_PID"
 else
     # Foreground: tee keeps the live output you are used to AND writes the log file
     "${KEEPAWAKE[@]}" npm run test:call:parallel 2>&1 | tee "$LOG_FILE"
