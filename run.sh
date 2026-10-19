@@ -76,19 +76,35 @@ LOG_FILE="logs/loadtest-$(date +%Y-%m-%d-%H-%M-%S).log"
 echo "Log file : $LOG_FILE"
 echo "--------------------------"
 
-# caffeinate flags:
-#   -d  prevent the display from sleeping
-#   -i  prevent the system from idle sleeping
-#   -m  prevent the disk from idle sleeping
-#   -s  prevent system sleep while on AC power
-#   -u  declare the user is active (keeps the machine awake even with the lid open and screen off)
-# Note: macOS still sleeps on an actual lid close. Keep the lid open, or connect
-# an external display / use `pmset` if you need lid-closed (clamshell) runs.
-CAFFEINATE=(caffeinate -dimsu)
+# Many parallel Chromium workers chew through file descriptors. Raise the soft
+# limit toward the hard limit so we do not hit "Too many open files".
+CURRENT_NOFILE=$(ulimit -Sn)
+HARD_NOFILE=$(ulimit -Hn)
+if [ "$HARD_NOFILE" = "unlimited" ]; then
+    ulimit -Sn 65536 2>/dev/null
+elif [ "$CURRENT_NOFILE" != "unlimited" ] && [ "$CURRENT_NOFILE" -lt "$HARD_NOFILE" ] 2>/dev/null; then
+    ulimit -Sn "$HARD_NOFILE" 2>/dev/null
+fi
+echo "Open files limit: $(ulimit -Sn)"
+
+# Keep the machine from sleeping mid-run. The tool differs per OS, and on a
+# remote/CI Linux host there may be nothing to inhibit at all - that is fine,
+# nohup already protects us from the SSH session dropping.
+KEEPAWAKE=()
+if command -v caffeinate >/dev/null 2>&1; then
+    # macOS: -d display, -i idle sleep, -m disk, -s system sleep on AC, -u user active
+    KEEPAWAKE=(caffeinate -dimsu)
+elif command -v systemd-inhibit >/dev/null 2>&1; then
+    # Linux desktop/laptop with systemd
+    KEEPAWAKE=(systemd-inhibit --what=idle:sleep:handle-lid-switch \
+               --who="run.sh" --why="WebRTC load test in progress" --mode=block)
+else
+    echo "Note: no sleep-inhibitor available on this host; relying on nohup only."
+fi
 
 if [ "$DETACH" -eq 1 ]; then
     # nohup + background: immune to the terminal closing or the SSH session dropping
-    nohup "${CAFFEINATE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
+    nohup "${KEEPAWAKE[@]}" npm run test:call:parallel > "$LOG_FILE" 2>&1 &
     RUN_PID=$!
     echo "$RUN_PID" > logs/loadtest.pid
     echo "Started in background (PID $RUN_PID)."
@@ -96,5 +112,5 @@ if [ "$DETACH" -eq 1 ]; then
     echo "  Stop the run: kill $RUN_PID"
 else
     # Foreground: tee keeps the live output you are used to AND writes the log file
-    "${CAFFEINATE[@]}" npm run test:call:parallel 2>&1 | tee "$LOG_FILE"
+    "${KEEPAWAKE[@]}" npm run test:call:parallel 2>&1 | tee "$LOG_FILE"
 fi
