@@ -141,39 +141,39 @@ async function joinCall(I, callUrl, userName, mediaState) {
   await dismissOpenInApp(I, userName);
 
   // Mute before joining (Conditional on PREMUTE)
-   if (!mediaState.micOn) {
-    try {
-      await I.waitForElement(CONFIG.selectors.micBtnOn, 15);
-      console.log(`[JoinFlow] ${userName}: Mic is ON, clicking to mute...`);
-      await I.click(CONFIG.selectors.micBtnOn);
-      await I.waitForElement(CONFIG.selectors.micBtnOff, 10);
-      console.log(`[JoinFlow] ${userName}: Mic is now OFF (Muted).`);
-    } catch (err) {
-      const alreadyMuted = await I.grabNumberOfVisibleElements(CONFIG.selectors.micBtnOff);
-      if (alreadyMuted > 0) {
-        console.log(`[JoinFlow] ${userName}: Mic was already OFF (no mic permission/device on this machine).`);
-      } else {
-        console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
-        if (process.env.DEBUG_CALL === 'true') {
-          await I.saveScreenshot(`premute_failed_${userName}.png`);
-        }
-      }
-    }
-  }
+  //  if (!mediaState.micOn) {
+  //   try {
+  //     await I.waitForElement(CONFIG.selectors.micBtnOn, 15);
+  //     console.log(`[JoinFlow] ${userName}: Mic is ON, clicking to mute...`);
+  //     await I.click(CONFIG.selectors.micBtnOn);
+  //     await I.waitForElement(CONFIG.selectors.micBtnOff, 10);
+  //     console.log(`[JoinFlow] ${userName}: Mic is now OFF (Muted).`);
+  //   } catch (err) {
+  //     const alreadyMuted = await I.grabNumberOfVisibleElements(CONFIG.selectors.micBtnOff);
+  //     if (alreadyMuted > 0) {
+  //       console.log(`[JoinFlow] ${userName}: Mic was already OFF (no mic permission/device on this machine).`);
+  //     } else {
+  //       console.warn(`[JoinFlow] ${userName}: Failed to mute microphone or mic button not found. Proceeding...`);
+  //       if (process.env.DEBUG_CALL === 'true') {
+  //         await I.saveScreenshot(`premute_failed_${userName}.png`);
+  //       }
+  //     }
+  //   }
+  // }
 
   // Configure video state before joining. The pre-join screen defaults to video ON,
   // so only act when this peer should have its camera off.
-  if (!mediaState.videoOn) {
-    try {
-      await I.waitForElement(CONFIG.selectors.webcamBtnOn, 15);
-      console.log(`[JoinFlow] ${userName}: Video is ON, clicking to turn off...`);
-      await I.click(CONFIG.selectors.webcamBtnOn);
-      await I.waitForElement(CONFIG.selectors.webcamBtnOff, 10);
-      console.log(`[JoinFlow] ${userName}: Video is now OFF.`);
-    } catch (err) {
-      console.warn(`[JoinFlow] ${userName}: Failed to turn off video or video button not found. Proceeding...`);
-    }
-  }
+  // if (!mediaState.videoOn) {
+  //   try {
+  //     await I.waitForElement(CONFIG.selectors.webcamBtnOn, 15);
+  //     console.log(`[JoinFlow] ${userName}: Video is ON, clicking to turn off...`);
+  //     await I.click(CONFIG.selectors.webcamBtnOn);
+  //     await I.waitForElement(CONFIG.selectors.webcamBtnOff, 10);
+  //     console.log(`[JoinFlow] ${userName}: Video is now OFF.`);
+  //   } catch (err) {
+  //     console.warn(`[JoinFlow] ${userName}: Failed to turn off video or video button not found. Proceeding...`);
+  //   }
+  // }
 
   try {
     await I.waitForElement(CONFIG.selectors.nameInput, 20); 
