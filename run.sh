@@ -7,6 +7,7 @@
 #                         Follow progress with: tail -f logs/<the log file printed below>
 #   ./run.sh --list       Show every detached run and whether it is still alive
 #   ./run.sh --stop <pid> Stop one detached run (and its whole process tree)
+#   ./run.sh --stop       Stop ALL running detached runs recorded in logs/
 
 DETACH=0
 case "$1" in
@@ -34,18 +35,49 @@ case "$1" in
         ;;
     --stop)
         target_pid="$2"
-        if [ -z "$target_pid" ]; then
-            echo "Usage: ./run.sh --stop <pid>   (see ./run.sh --list)" >&2
-            exit 1
-        fi
-        # Negate the PID to signal the whole process group, so npm/node/chromium
-        # children die with the parent instead of being orphaned.
-        if kill -TERM -"$target_pid" 2>/dev/null || kill -TERM "$target_pid" 2>/dev/null; then
-            echo "Sent TERM to $target_pid (and its process group)."
-        else
+
+        # Stop one run: signal the whole process group first (negated PID) so
+        # npm/node/chromium children die with the wrapper instead of being
+        # orphaned, then fall back to the single PID.
+        stop_pid() {
+            pid="$1"
+            if kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; then
+                echo "Sent TERM to $pid (and its process group)."
+                return 0
+            fi
+            return 1
+        }
+
+        if [ -n "$target_pid" ] && [ "$target_pid" != "all" ]; then
+            if stop_pid "$target_pid"; then
+                exit 0
+            fi
             echo "No such running process: $target_pid" >&2
             exit 1
         fi
+
+        # No PID given (or "all"): stop every run still alive in logs/.
+        stopped=0
+        alive=0
+        for pidfile in logs/*.pid; do
+            [ -e "$pidfile" ] || continue
+            pid=$(cat "$pidfile" 2>/dev/null)
+            [ -n "$pid" ] || continue
+            kill -0 "$pid" 2>/dev/null || kill -0 -"$pid" 2>/dev/null || continue
+            alive=$((alive + 1))
+            if stop_pid "$pid"; then
+                stopped=$((stopped + 1))
+            else
+                echo "Could not stop $pid (from $pidfile)." >&2
+            fi
+        done
+
+        if [ "$alive" -eq 0 ]; then
+            echo "No running detached runs found (see ./run.sh --list)."
+            exit 0
+        fi
+        echo "Stopped $stopped of $alive running test(s)."
+        [ "$stopped" -eq "$alive" ] || exit 1
         exit 0
         ;;
 esac
@@ -159,6 +191,7 @@ if [ "$DETACH" -eq 1 ]; then
     echo "  Follow logs : tail -f $LOG_FILE"
     echo "  List runs   : ./run.sh --list"
     echo "  Stop the run: ./run.sh --stop $RUN_PID"
+    echo "  Stop all    : ./run.sh --stop"
 else
     # Foreground: tee keeps the live output you are used to AND writes the log file
     "${KEEPAWAKE[@]}" npm run test:call:parallel 2>&1 | tee "$LOG_FILE"
